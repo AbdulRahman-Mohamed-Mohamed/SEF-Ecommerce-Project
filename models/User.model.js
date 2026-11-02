@@ -1,9 +1,9 @@
 import { model, Schema } from "mongoose";
-import bcrypt from "bcryptjs";
+import bcryptjs from "bcryptjs";
 
 /// creating address Schema
 
-const addressSchema = Schema({
+const addressSchema = new Schema({
     country: {
         type: String,
         trim: true,
@@ -20,7 +20,7 @@ const addressSchema = Schema({
         type: String,
         trim: true,
     },
-    postalcode: {
+    postalCode: {
         type: String,
         trim: true,
     },
@@ -35,7 +35,7 @@ const addressSchema = Schema({
 
 /// creating user Schema
 
-const userSchema = Schema({
+const userSchema = new Schema({
     username: {
         type: String,
         required: true,
@@ -52,15 +52,12 @@ const userSchema = Schema({
         type: String,
         required: true,
         trim: true,
-        select: false,
+        select: false, // hide field password from query results by default
     },
     phone: {
         type: String,
         trim: true,
         default: ""
-    },
-    age: {
-        type: Number
     },
     avatar: {
         type: String,
@@ -98,17 +95,17 @@ userSchema.pre("save", async function () {
     if (!user.isModified("password")) {
         return
     }
-    user.password = await bcrypt.hash(user.password, 10)
+    user.password = await bcryptjs.hash(user.password, 10)
 })
 
 /// comparing input data to saving password in DB
 
 userSchema.methods.comparePassword = async function (enteredPass) {
-    return await bcrypt.compare(enteredPass, this.password)
+    return await bcryptjs.compare(enteredPass, this.password)
 }
 
 /// creating user Model
 
-const userModel = model("User", userSchema)
+const User = model("User", userSchema)
 
-export default userModel;
+export default User;
