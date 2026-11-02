@@ -76,7 +76,14 @@ const userSchema = new Schema({
     isVerified: {
         type: Boolean,
         default: false
-    },
+    },registerOtp: {
+    type: String,
+    select: false,
+},
+registerOtpExpire: {
+    type: Date,
+    select: false,
+},
     resetPasswordToken: {
         type: String
     },
