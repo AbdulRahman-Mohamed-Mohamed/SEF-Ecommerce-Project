@@ -1,3 +1,7 @@
+
+import dns from "node:dns";
+
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
 import express from "express";
 const app = express();
 
@@ -17,7 +21,7 @@ import connectToDB from "./DB/mongoose.js";
 async function startServer() {
     await connectToDB();
 
-    app.listen(port, ()=>{
+    app.listen(port, () => {
         console.log(`Server is running on port ${port}`);
     });
 }
