@@ -1,6 +1,16 @@
 import { model, Schema } from "mongoose"
 import slugify from "slugify"
-
+// Create Image Schema
+const imageSchema = new Schema({
+    url: {
+        type: String,
+        required: true,
+    },
+    alt: {
+        type: String,
+        trim: true,
+    },
+});
 //create review Schema
 
 const reviewSchema = new Schema({
@@ -30,7 +40,7 @@ const productSchema = new Schema({
     slug: {
         type: String,
         required: true,
-        unique:true,
+        unique: true,
     },
     shortDescription: {
         type: String,
@@ -48,6 +58,13 @@ const productSchema = new Schema({
     },
     discountPrice: {
         type: Number,
+        min: 0,
+        validate: {
+            validator: function (value) {
+                return value == null || value < this.price;
+            },
+            message: "Discount price must be less than the original price",
+        },
     },
     stock: {
         type: Number,
@@ -56,16 +73,14 @@ const productSchema = new Schema({
     },
     sku: {
         type: String,
-        unique:true,
+        unique: true,
     },
-    images: [{
-        type: String,
-        required: true,
-    }],
+    images: [imageSchema],
+
     category: {
         type: String,
         required: true,
-        lowercase:true,
+        lowercase: true,
     },
     subcategory: {
         type: String,
@@ -79,9 +94,14 @@ const productSchema = new Schema({
     reviews: [reviewSchema],
     averageRating: {
         type: Number,
+        default: 0,
+        min: 0,
+        max: 5,
     },
     numReviews: {
         type: Number,
+        default: 0,
+        min: 0,
     },
     featured: {
         type: Boolean,
@@ -102,7 +122,15 @@ const productSchema = new Schema({
 
 
 //create Product Model
-
+// Generate slug before saving
+productSchema.pre("validate", function () {
+    if (this.isModified("name")) {
+        this.slug = slugify(this.name, {
+            lower: true,
+            strict: true,
+        });
+    }
+});
 const Product = model("Product", productSchema)
 
 export default Product;
