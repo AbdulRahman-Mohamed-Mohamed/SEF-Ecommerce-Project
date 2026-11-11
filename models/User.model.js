@@ -51,7 +51,6 @@ const userSchema = new Schema({
     password: {
         type: String,
         required: true,
-        trim: true,
         select: false, // hide field password from query results by default
     },
     phone: {
@@ -91,17 +90,19 @@ const userSchema = new Schema({
 /// hashing password before saving data in DB
 
 userSchema.pre("save", async function () {
-    const user = this
-    if (!user.isModified("password")) {
+    if (!this.isModified("password")) {
         return
     }
-    user.password = await bcryptjs.hash(user.password, 10)
+    if(this.$locals.passwordAlreadyhased){
+        return
+    }
+    this.password = await bcryptjs.hash(this.password, 10)
 })
 
 /// comparing input data to saving password in DB
 
-userSchema.methods.comparePassword = async function (enteredPass) {
-    return await bcryptjs.compare(enteredPass, this.password)
+userSchema.methods.comparePassword = function (enteredPass) {
+    return bcryptjs.compare(enteredPass, this.password)
 }
 
 /// creating user Model

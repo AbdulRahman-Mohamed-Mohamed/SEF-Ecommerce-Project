@@ -6,6 +6,9 @@ const otpSchema = new Schema({
     email: {
         type: String,
         required: true,
+        trim: true,
+        lowercase: true,
+        unique: true,
     },
     otp: {
         type: String,
@@ -14,6 +17,7 @@ const otpSchema = new Schema({
     expiresAt: {
         type: Date,
         required: true,
+        expires: 0, //MongoDB automatically deletes the document when it reaches its expiration time.
     },
     userData: {
         type: Object,
