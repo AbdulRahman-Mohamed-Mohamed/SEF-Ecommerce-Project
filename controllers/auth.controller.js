@@ -3,22 +3,26 @@ import { randomInt } from "node:crypto";
 import bcryptjs from "bcryptjs";
 
 import User from "../models/User.model.js";
+import OTP from "../models/Otp.model.js";
 import sendEmail from "../utils/sendEmail.js";
 
 export const sendRegisterOtp = async (req, res) => {
     try {
         const { username, email, password } = req.body;
 
-        // Validate required fields
+        // 1. Validate required fields
         if (!username || !email || !password) {
             return res.status(400).json({
                 message: "Username, email and password are required",
             });
         }
 
-        // Check if user already exists
-        let user = await User.findOne({
-            email: email.toLowerCase().trim(),
+        // 2. Normalize email
+        const normalizedEmail = email.toLowerCase().trim();
+
+        // 3. Check if user already exists
+        const user = await User.findOne({
+            email: normalizedEmail,
         });
 
         if (user && user.isVerified) {
@@ -27,37 +31,40 @@ export const sendRegisterOtp = async (req, res) => {
             });
         }
 
-        // Generate a 6-digit OTP
+        // 4. Generate 6-digit OTP
         const otp = randomInt(100000, 1000000).toString();
 
-        // Hash OTP before saving
+        // 5. Hash OTP before storing it
         const hashedOtp = await bcryptjs.hash(otp, 10);
 
-        // OTP expires after 10 minutes
-        const otpExpire = new Date(Date.now() + 10 * 60 * 1000);
+        // 6. Set OTP expiration (10 minutes)
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-        if (!user) {
-            // Create new unverified user
-            user = new User({
-                username,
-                email: email.toLowerCase().trim(),
-                password,
-                registerOtp: hashedOtp,
-                registerOtpExpire: otpExpire,
-                isVerified: false,
-            });
-        } else {
-            // Update OTP for existing unverified user
-            user.registerOtp = hashedOtp;
-            user.registerOtpExpire = otpExpire;
-        }
+        // 7. Save OTP and registration data in OTP Model
+        const otpRecord = await OTP.findOneAndUpdate(
+            { email: normalizedEmail },
+            {
+                email: normalizedEmail,
+                otp: hashedOtp,
+                expiresAt,
+                userData: {
+                    username: username.trim(),
+                    email: normalizedEmail,
+                    password,
+                },
+            },
+            {
+                new: true,
+                upsert: true,
+                runValidators: true,
+                setDefaultsOnInsert: true,
+            }
+        );
 
-        await user.save();
-
-        // Send OTP email
+        // 8. Send OTP email
         try {
             await sendEmail({
-                to: user.email,
+                to: normalizedEmail,
                 subject: "Email Verification - SEF Ecommerce",
                 html: `
                     <div style="font-family: Arial, sans-serif;">
@@ -72,15 +79,14 @@ export const sendRegisterOtp = async (req, res) => {
         } catch (emailError) {
             console.error("Email sending failed:", emailError);
 
-            user.registerOtp = undefined;
-            user.registerOtpExpire = undefined;
-            await user.save();
+            await OTP.deleteOne({ _id: otpRecord._id });
 
             return res.status(500).json({
                 message: "Failed to send verification email",
             });
         }
 
+        // 9. Send response
         return res.status(200).json({
             message: "OTP sent successfully. Please check your email.",
         });
@@ -88,14 +94,9 @@ export const sendRegisterOtp = async (req, res) => {
     } catch (error) {
         console.error("Register OTP Error:", error);
 
-        if (error.code === 11000) {
-            return res.status(409).json({
-                message: "Email is already registered",
-            });
-        }
-
         return res.status(500).json({
             message: "Internal server error",
         });
     }
 };
+
