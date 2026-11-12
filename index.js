@@ -1,25 +1,37 @@
+import "dotenv/config";
+
 import express from "express";
+import connectDB from "./DB/mongoose.js";
+
 const app = express();
 
-import dotenv from "dotenv";
-dotenv.config();
+const PORT = process.env.PORT || 5000;
 
-const port = process.env.PORT || 5000;
-
+// Middlewares
 app.use(express.json());
 
+// Routes
 app.get("/", (req, res) => {
-    res.json({ message: "SEF Ecommerce API is running" });
+    res.json({
+        message: "SEF Ecommerce API is running"
+    });
 });
 
-import connectToDB from "./DB/mongoose.js";
+// Start Server
+const startServer = async () => {
+    try {
+        // Connect to Database first
+        await connectDB();
 
-async function startServer() {
-    await connectToDB();
+        // Start listening only after successful connection
+        app.listen(PORT, () => {
+            console.log(`Server is running on port ${PORT}`);
+        });
 
-    app.listen(port, ()=>{
-        console.log(`Server is running on port ${port}`);
-    });
-}
+    } catch (error) {
+        console.error("Failed to start server:", error.message);
+        process.exit(1);
+    }
+};
 
 startServer();
