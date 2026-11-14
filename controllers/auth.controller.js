@@ -1,59 +1,10 @@
 
-import { randomInt, randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+import { randomInt } from "node:crypto";
 import bcryptjs from "bcryptjs";
 
 import User from "../models/User.model.js";
 import OTP from "../models/Otp.model.js";
 import sendEmail from "../utils/sendEmail.js";
-
-// Encrypt temporary password using AES-256-GCM
-const encryptPassword = (password) => {
-    const key = Buffer.from(process.env.OTP_ENCRYPTION_KEY || "", "hex");
-
-    if (key.length !== 32) {
-        throw new Error("OTP_ENCRYPTION_KEY must be a valid 32-byte hex key");
-    }
-
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", key, iv);
-
-    const encrypted = Buffer.concat([
-        cipher.update(password, "utf8"),
-        cipher.final(),
-    ]);
-
-    const authTag = cipher.getAuthTag();
-
-    return {
-        encryptedPassword: encrypted.toString("hex"),
-        iv: iv.toString("hex"),
-        authTag: authTag.toString("hex"),
-    };
-};
-
-// Decrypt temporary password
-const decryptPassword = ({ encryptedPassword, iv, authTag }) => {
-    const key = Buffer.from(process.env.OTP_ENCRYPTION_KEY || "", "hex");
-
-    if (key.length !== 32) {
-        throw new Error("OTP_ENCRYPTION_KEY must be a valid 32-byte hex key");
-    }
-
-    const decipher = createDecipheriv(
-        "aes-256-gcm",
-        key,
-        Buffer.from(iv, "hex")
-    );
-
-    decipher.setAuthTag(Buffer.from(authTag, "hex"));
-
-    const decrypted = Buffer.concat([
-        decipher.update(Buffer.from(encryptedPassword, "hex")),
-        decipher.final(),
-    ]);
-
-    return decrypted.toString("utf8");
-};
 
 // Send registration OTP
 export const sendRegisterOtp = async (req, res) => {
@@ -75,11 +26,12 @@ export const sendRegisterOtp = async (req, res) => {
 
         const normalizedEmail = email.trim().toLowerCase();
 
-        const existingUser = await User.findOne({
+        const user = await User.findOne({
             email: normalizedEmail,
         });
 
-        if (existingUser) {
+        // Reject registration if the email already exists
+        if (user) {
             return res.status(409).json({
                 message: "This email is already registered",
             });
@@ -89,7 +41,8 @@ export const sendRegisterOtp = async (req, res) => {
 
         const hashedOtp = await bcryptjs.hash(otp, 10);
 
-        const encryptedPassword = encryptPassword(password);
+        // Hash password before storing temporary registration data
+        const hashedPassword = await bcryptjs.hash(password, 10);
 
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -102,7 +55,7 @@ export const sendRegisterOtp = async (req, res) => {
                 userData: {
                     username: username.trim(),
                     email: normalizedEmail,
-                    ...encryptedPassword,
+                    hashedPassword,
                 },
             },
             {
@@ -130,7 +83,11 @@ export const sendRegisterOtp = async (req, res) => {
         } catch (emailError) {
             console.error("Email sending failed:", emailError);
 
-            await OTP.deleteOne({ _id: otpRecord._id });
+            // Delete only this OTP record if it still has the same OTP
+            await OTP.deleteOne({
+                _id: otpRecord._id,
+                otp: hashedOtp,
+            });
 
             return res.status(500).json({
                 message: "Failed to send verification email",
@@ -143,6 +100,13 @@ export const sendRegisterOtp = async (req, res) => {
 
     } catch (error) {
         console.error("Register OTP Error:", error);
+
+        // Handle duplicate key errors separately
+        if (error.code === 11000) {
+            return res.status(409).json({
+                message: "This email is already registered",
+            });
+        }
 
         return res.status(500).json({
             message: "Internal server error",
@@ -202,20 +166,18 @@ export const verifyRegisterOtp = async (req, res) => {
         if (
             !userData ||
             !userData.username ||
-            !userData.encryptedPassword ||
-            !userData.iv ||
-            !userData.authTag
+            !userData.hashedPassword
         ) {
             return res.status(400).json({
                 message: "Registration data is missing. Please register again.",
             });
         }
 
-        const existingUser = await User.findOne({
+        const user = await User.findOne({
             email: normalizedEmail,
         });
 
-        if (existingUser) {
+        if (user) {
             await OTP.deleteOne({ _id: otpRecord._id });
 
             return res.status(409).json({
@@ -223,18 +185,15 @@ export const verifyRegisterOtp = async (req, res) => {
             });
         }
 
-        const originalPassword = decryptPassword({
-            encryptedPassword: userData.encryptedPassword,
-            iv: userData.iv,
-            authTag: userData.authTag,
-        });
-
         const newUser = new User({
             username: userData.username,
             email: normalizedEmail,
-            password: originalPassword,
+            password: userData.hashedPassword,
             isVerified: true,
         });
+
+        // Tell the User model that the password is already hashed
+        newUser.$locals.passwordAlreadyHashed = true;
 
         await newUser.save();
 
@@ -253,6 +212,12 @@ export const verifyRegisterOtp = async (req, res) => {
 
     } catch (error) {
         console.error("Verify Register OTP Error:", error);
+
+        if (error.code === 11000) {
+            return res.status(409).json({
+                message: "This email is already registered",
+            });
+        }
 
         return res.status(500).json({
             message: "Internal server error",
