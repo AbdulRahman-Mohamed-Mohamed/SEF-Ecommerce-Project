@@ -83,7 +83,7 @@ export const sendRegisterOtp = async (req, res) => {
         } catch (emailError) {
             console.error("Email sending failed:", emailError);
 
-            // Delete only this OTP record if it still has the same OTP
+            // Delete only this OTP version if it has not been updated
             await OTP.deleteOne({
                 _id: otpRecord._id,
                 otp: hashedOtp,
@@ -100,13 +100,6 @@ export const sendRegisterOtp = async (req, res) => {
 
     } catch (error) {
         console.error("Register OTP Error:", error);
-
-        // Handle duplicate key errors separately
-        if (error.code === 11000) {
-            return res.status(409).json({
-                message: "This email is already registered",
-            });
-        }
 
         return res.status(500).json({
             message: "Internal server error",
@@ -143,7 +136,10 @@ export const verifyRegisterOtp = async (req, res) => {
         }
 
         if (otpRecord.expiresAt <= new Date()) {
-            await OTP.deleteOne({ _id: otpRecord._id });
+            await OTP.deleteOne({
+                _id: otpRecord._id,
+                otp: otpRecord.otp,
+            });
 
             return res.status(400).json({
                 message: "OTP has expired. Please request a new one.",
@@ -177,8 +173,12 @@ export const verifyRegisterOtp = async (req, res) => {
             email: normalizedEmail,
         });
 
+        // Reject registration if the email already exists
         if (user) {
-            await OTP.deleteOne({ _id: otpRecord._id });
+            await OTP.deleteOne({
+                _id: otpRecord._id,
+                otp: otpRecord.otp,
+            });
 
             return res.status(409).json({
                 message: "This email is already registered",
@@ -195,9 +195,18 @@ export const verifyRegisterOtp = async (req, res) => {
         // Tell the User model that the password is already hashed
         newUser.$locals.passwordAlreadyHashed = true;
 
+        // Create the user
         await newUser.save();
 
-        await OTP.deleteOne({ _id: otpRecord._id });
+        // Delete OTP in a separate try-catch
+        try {
+            await OTP.deleteOne({
+                _id: otpRecord._id,
+                otp: otpRecord.otp,
+            });
+        } catch (deleteError) {
+            console.error("OTP deletion failed:", deleteError);
+        }
 
         return res.status(201).json({
             message: "Email verified and account created successfully",
