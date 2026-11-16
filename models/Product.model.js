@@ -65,23 +65,34 @@ const productSchema = new Schema({
         type: Number,
         min: 0,
         validate(val) {
-            return val === 0 || val < this.price //if price=0 ,discount=0
+            return val == null || (val > 0 && val < this.price) //if price = 0 , discount = 0
         },
     },
     stock: {
         type: Number,
         required: true,
         min: 0,
+        validate: {
+            validator: function (val) {
+                return Number.isInteger(val)
+            },
+            message: '{VALUE} is not an integer value'
+        }
     },
     sku: {
         type: String,
         unique: true,
+        sparse: true, // Allow documents without this field in the unique index
     },
     images: {
         type: [imageSchema],
-        validate(val) {
-            return val.length > 0
-        }
+        required: true,
+        validate: {
+            validator: function (val) {
+                return val.length > 0
+            },
+            message: "At least one image is required",
+        },
     },
     category: {
         type: String,
@@ -126,7 +137,13 @@ const productSchema = new Schema({
 
 // create slugify for product name before validate data
 
-productSchema.pre("validate", function () {
+const slugExists = async (slug, productId) => {
+    const existingProduct = await Product.findOne({ slug, _id: { $ne: productId } })
+    return existingProduct !== null
+}
+
+productSchema.pre("validate", async function () {
+
     if (!this.isModified("name")) {
         return
     }
@@ -137,7 +154,20 @@ productSchema.pre("validate", function () {
         strict: true,     // strip special characters except replacement, defaults to `false`
         trim: true         // trim leading and trailing replacement chars, defaults to `true`
     })
+    const baseSlug = this.slug
+    let counter = 1
+    while (await slugExists(this.slug, this._id)) {
+        this.slug = slugify(`${baseSlug}-${counter}`, {
+            replacement: '-',  // replace spaces with replacement character, defaults to `-`
+            remove: undefined, // remove characters that match regex, defaults to `undefined`
+            lower: true,      // convert to lower case
+            strict: true,     // strip special characters except replacement, defaults to `false`
+            trim: true         // trim leading and trailing replacement chars, defaults to `true`
+        })
+        counter++
+    }
 })
+
 
 
 // create calcAverageRating()
