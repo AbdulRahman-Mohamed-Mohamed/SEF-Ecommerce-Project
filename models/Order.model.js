@@ -21,9 +21,14 @@ const orderItemSchema = new Schema({
         type: Number,
         required: true,
         min: 1,
+        validate: {
+            validator: Number.isInteger,
+            message: "{VALUE} is not an integer value",
+        },
     },
     image: {
         type: String,
+        required: true,
     },
 })
 
@@ -60,7 +65,11 @@ const shippingAddressSchema = new Schema({
         required: true,
         trim: true,
     },
-})
+},
+    {
+        _id: false,
+    }
+)
 
 
 // create order Schema
@@ -73,6 +82,12 @@ const orderSchema = new Schema({
     items: {
         type: [orderItemSchema],
         required: true,
+        validate: {
+            validator: function (val) {
+                return val.length > 0
+            },
+            message: "Order must have at least one item"
+        }
     },
     shippingAddress: {
         type: shippingAddressSchema,
@@ -94,20 +109,27 @@ const orderSchema = new Schema({
     subtotal: {
         type: Number,
         required: true,
+        min: 0,
     },
     shippingFee: {
         type: Number,
+        required: true,
+        min: 0,
     },
     tax: {
         type: Number,
+        required: true,
+        min: 0,
     },
     discount: {
         type: Number,
         default: 0,
+        min: 0,
     },
     totalPrice: {
         type: Number,
         required: true,
+        min: 0,
     },
     status: {
         type: String,
@@ -133,7 +155,6 @@ const orderSchema = new Schema({
         maxlength: 1000,
         trim: true,
     }
-
 },
     {
         timestamps: true,
