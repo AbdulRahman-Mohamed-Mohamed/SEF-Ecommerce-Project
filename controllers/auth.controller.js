@@ -101,6 +101,12 @@ export const sendRegisterOtp = async (req, res) => {
     } catch (error) {
         console.error("Register OTP Error:", error);
 
+        if (error.code === 11000) {
+            return res.status(409).json({
+                message: "This email is already registered",
+            });
+        }
+
         return res.status(500).json({
             message: "Internal server error",
         });
