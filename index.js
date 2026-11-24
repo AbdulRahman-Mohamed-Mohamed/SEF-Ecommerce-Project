@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import express from "express";
 import connectDB from "./DB/mongoose.js";
+import authRoutes from "./routes/auth.routes.js";
 
 const app = express();
 
@@ -16,6 +17,9 @@ app.get("/", (req, res) => {
         message: "SEF Ecommerce API is running"
     });
 });
+
+// Auth Routes
+app.use("/api/auth", authRoutes);
 
 // Start Server
 const startServer = async () => {
