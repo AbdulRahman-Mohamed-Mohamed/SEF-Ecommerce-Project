@@ -71,12 +71,6 @@ const userSchema = new Schema(
             default: "customer",
         },
         addresses: [addressSchema],
-        wishlist: [
-            {
-                type: Schema.Types.ObjectId,
-                ref: "Product",
-            },
-        ],
         isVerified: {
             type: Boolean,
             default: false,
