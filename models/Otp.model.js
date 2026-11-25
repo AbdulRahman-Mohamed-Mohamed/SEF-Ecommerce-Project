@@ -2,6 +2,7 @@ import { model, Schema } from "mongoose";
 
 //create otp Schema
 
+
 const otpSchema = new Schema(
     {
         email: {
@@ -15,10 +16,19 @@ const otpSchema = new Schema(
             type: String,
             required: true,
         },
+        attempts: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
+        lastSentAt: {
+            type: Date,
+            default: null,
+        },
         expiresAt: {
             type: Date,
             required: true,
-            expires: 0, // MongoDB automatically deletes the document when it reaches its expiration time.
+            expires: 0,
         },
         userData: {
             type: Object,
@@ -29,7 +39,6 @@ const otpSchema = new Schema(
         timestamps: true,
     }
 );
-
 //create OTP Model
 
 const OTP = model("OTP", otpSchema);
