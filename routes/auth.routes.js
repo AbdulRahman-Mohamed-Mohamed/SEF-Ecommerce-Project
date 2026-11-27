@@ -1,3 +1,4 @@
+
 import express from "express";
 
 import {
@@ -27,7 +28,7 @@ router.post(
 );
 
 router.post(
-    "/register/verify-otp",
+    "/verify-otp",
     verifyOtpLimiter,
     validate(verifyRegisterOtpSchema),
     verifyRegisterOtp

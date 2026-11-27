@@ -11,23 +11,8 @@ export const sendRegisterOtp = async (req, res) => {
     try {
         const { username, email, password } = req.body;
 
-        if (
-            typeof username !== "string" ||
-            typeof email !== "string" ||
-            typeof password !== "string" ||
-            !username.trim() ||
-            !email.trim() ||
-            !password
-        ) {
-            return res.status(400).json({
-                message: "Username, email and password are required",
-            });
-        }
-
-        const normalizedEmail = email.trim().toLowerCase();
-
         const user = await User.findOne({
-            email: normalizedEmail,
+            email
         });
 
         // Reject registration if the email already exists
@@ -37,20 +22,11 @@ export const sendRegisterOtp = async (req, res) => {
             });
         }
 
-        const otp = randomInt(100000, 1000000).toString();
-
-        const hashedOtp = await bcryptjs.hash(otp, 10);
-
-        // Hash password before storing temporary registration data
-        const hashedPassword = await bcryptjs.hash(password, 10);
-
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-        // Enforce 60-second resend cooldown
+        // Check 60s resend cooldown BEFORE bcrypt operations
         const now = new Date();
 
         const existingOtp = await OTP.findOne({
-            email: normalizedEmail,
+            email
         });
 
         if (existingOtp?.lastSentAt) {
@@ -63,6 +39,15 @@ export const sendRegisterOtp = async (req, res) => {
                 });
             }
         }
+
+        const otp = randomInt(100000, 1000000).toString();
+
+        const hashedOtp = await bcryptjs.hash(otp, 10);
+
+        // Hash password before storing temporary registration data
+        const hashedPassword = await bcryptjs.hash(password, 10);
+
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
         let otpRecord;
 
@@ -77,8 +62,8 @@ export const sendRegisterOtp = async (req, res) => {
                         otp: hashedOtp,
                         expiresAt,
                         userData: {
-                            username: username.trim(),
-                            email: normalizedEmail,
+                            username,
+                            email,
                             hashedPassword,
                         },
                         attempts: 0,
@@ -99,12 +84,12 @@ export const sendRegisterOtp = async (req, res) => {
         } else {
             try {
                 otpRecord = await OTP.create({
-                    email: normalizedEmail,
+                    email,
                     otp: hashedOtp,
                     expiresAt,
                     userData: {
-                        username: username.trim(),
-                        email: normalizedEmail,
+                        username,
+                        email,
                         hashedPassword,
                     },
                     attempts: 0,
@@ -124,7 +109,7 @@ export const sendRegisterOtp = async (req, res) => {
         // Send OTP email
         try {
             await sendEmail({
-                to: normalizedEmail,
+                to: email,
                 subject: "Email Verification - SEF Ecommerce",
                 html: `
                     <div style="font-family: Arial, sans-serif;">
@@ -174,21 +159,8 @@ export const verifyRegisterOtp = async (req, res) => {
     try {
         const { email, otp } = req.body;
 
-        if (
-            typeof email !== "string" ||
-            typeof otp !== "string" ||
-            !email.trim() ||
-            !/^\d{6}$/.test(otp)
-        ) {
-            return res.status(400).json({
-                message: "Valid email and 6-digit OTP are required",
-            });
-        }
-
-        const normalizedEmail = email.trim().toLowerCase();
-
         const otpRecord = await OTP.findOne({
-            email: normalizedEmail,
+            email
         });
 
         // Check if OTP exists
@@ -273,7 +245,7 @@ export const verifyRegisterOtp = async (req, res) => {
 
         // Check if the email is already registered
         const user = await User.findOne({
-            email: normalizedEmail,
+            email
         });
 
         if (user) {
@@ -287,33 +259,46 @@ export const verifyRegisterOtp = async (req, res) => {
             });
         }
 
-        // Atomically consume OTP to prevent reuse
-        const consumedOtp = await OTP.findOneAndDelete({
-            _id: otpRecord._id,
-            otp: otpRecord.otp,
-            attempts: { $lt: 5 },
-            expiresAt: { $gt: new Date() },
-        });
+        // Create new user and consume OTP in one transaction
+        const session = await OTP.db.startSession();
 
-        // Prevent concurrent requests from using the same OTP
-        if (!consumedOtp) {
-            return res.status(400).json({
-                message: "OTP is invalid, expired, or already used.",
+        let newUser;
+
+        try {
+            await session.withTransaction(async () => {
+                // Atomically consume OTP
+                const consumedOtp = await OTP.findOneAndDelete(
+                    {
+                        _id: otpRecord._id,
+                        otp: otpRecord.otp,
+                        attempts: { $lt: 5 },
+                        expiresAt: { $gt: new Date() },
+                    },
+                    { session }
+                );
+
+                if (!consumedOtp) {
+                    const error = new Error("OTP is invalid, expired, or already used.");
+                    error.code = "OTP_INVALID";
+                    throw error;
+                }
+
+                // Create new user
+                newUser = new User({
+                    username: userData.username,
+                    email,
+                    password: userData.hashedPassword,
+                    isVerified: true,
+                });
+
+                // Password is already hashed
+                newUser.$locals.passwordAlreadyHashed = true;
+
+                await newUser.save({ session });
             });
+        } finally {
+            await session.endSession();
         }
-
-        // Create new user
-        const newUser = new User({
-            username: userData.username,
-            email: normalizedEmail,
-            password: userData.hashedPassword,
-            isVerified: true,
-        });
-
-        // Tell the User model that the password is already hashed
-        newUser.$locals.passwordAlreadyHashed = true;
-
-        await newUser.save();
 
         return res.status(201).json({
             message: "Email verified and account created successfully",
@@ -329,6 +314,12 @@ export const verifyRegisterOtp = async (req, res) => {
     } catch (error) {
         console.error("Verify Register OTP Error:", error);
 
+        if (error.code === "OTP_INVALID") {
+            return res.status(400).json({
+                message: "OTP is invalid, expired, or already used.",
+            });
+        }
+
         if (error.code === 11000) {
             return res.status(409).json({
                 message: "This email is already registered",
@@ -340,4 +331,3 @@ export const verifyRegisterOtp = async (req, res) => {
         });
     }
 };
-

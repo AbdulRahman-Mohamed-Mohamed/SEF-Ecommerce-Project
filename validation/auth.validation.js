@@ -7,7 +7,7 @@ export const sendRegisterOtpSchema = Joi.object({
 
     email: Joi.string().trim().lowercase().email().required(),
 
-    password: Joi.string().required(),
+    password: Joi.string().min(15).max(72, "utf8").required(),
 }).unknown(false);
 
 // Validation for verifying registration OTP

@@ -20,6 +20,10 @@ const otpSchema = new Schema(
             type: Number,
             default: 0,
             min: 0,
+            validate: {
+                validator: Number.isInteger,
+                message: "Attempts must be an integer",
+            },
         },
         lastSentAt: {
             type: Date,
