@@ -11,23 +11,8 @@ export const sendRegisterOtp = async (req, res) => {
     try {
         const { username, email, password } = req.body;
 
-        if (
-            typeof username !== "string" ||
-            typeof email !== "string" ||
-            typeof password !== "string" ||
-            !username.trim() ||
-            !email.trim() ||
-            !password
-        ) {
-            return res.status(400).json({
-                message: "Username, email and password are required",
-            });
-        }
-
-        const normalizedEmail = email.trim().toLowerCase();
-
         const user = await User.findOne({
-            email: normalizedEmail,
+            email
         });
 
         // Reject registration if the email already exists
@@ -35,6 +20,24 @@ export const sendRegisterOtp = async (req, res) => {
             return res.status(409).json({
                 message: "This email is already registered",
             });
+        }
+
+        // Check 60s resend cooldown BEFORE bcrypt operations
+        const now = new Date();
+
+        const existingOtp = await OTP.findOne({
+            email
+        });
+
+        if (existingOtp?.lastSentAt) {
+            const elapsedTime =
+                now.getTime() - existingOtp.lastSentAt.getTime();
+
+            if (elapsedTime < 60 * 1000) {
+                return res.status(429).json({
+                    message: "Please wait 60 seconds before requesting another OTP.",
+                });
+            }
         }
 
         const otp = randomInt(100000, 1000000).toString();
@@ -46,29 +49,67 @@ export const sendRegisterOtp = async (req, res) => {
 
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-        const otpRecord = await OTP.findOneAndUpdate(
-            { email: normalizedEmail },
-            {
-                email: normalizedEmail,
-                otp: hashedOtp,
-                expiresAt,
-                userData: {
-                    username: username.trim(),
-                    email: normalizedEmail,
-                    hashedPassword,
-                },
-            },
-            {
-                new: true,
-                upsert: true,
-                runValidators: true,
-                setDefaultsOnInsert: true,
-            }
-        );
+        let otpRecord;
 
+        if (existingOtp) {
+            otpRecord = await OTP.findOneAndUpdate(
+                {
+                    _id: existingOtp._id,
+                    lastSentAt: existingOtp.lastSentAt,
+                },
+                {
+                    $set: {
+                        otp: hashedOtp,
+                        expiresAt,
+                        userData: {
+                            username,
+                            email,
+                            hashedPassword,
+                        },
+                        attempts: 0,
+                        lastSentAt: now,
+                    },
+                },
+                {
+                    new: true,
+                    runValidators: true,
+                }
+            );
+
+            if (!otpRecord) {
+                return res.status(429).json({
+                    message: "Please wait 60 seconds before requesting another OTP.",
+                });
+            }
+        } else {
+            try {
+                otpRecord = await OTP.create({
+                    email,
+                    otp: hashedOtp,
+                    expiresAt,
+                    userData: {
+                        username,
+                        email,
+                        hashedPassword,
+                    },
+                    attempts: 0,
+                    lastSentAt: now,
+                });
+            } catch (error) {
+                if (error.code === 11000) {
+                    return res.status(429).json({
+                        message: "Please wait 60 seconds before requesting another OTP.",
+                    });
+                }
+
+                throw error;
+            }
+        }
+
+        // Send OTP email
         try {
             await sendEmail({
-                to: normalizedEmail,
+                to: email,
                 subject: "Email Verification - SEF Ecommerce",
                 html: `
                     <div style="font-family: Arial, sans-serif;">
@@ -118,29 +159,18 @@ export const verifyRegisterOtp = async (req, res) => {
     try {
         const { email, otp } = req.body;
 
-        if (
-            typeof email !== "string" ||
-            typeof otp !== "string" ||
-            !email.trim() ||
-            !/^\d{6}$/.test(otp)
-        ) {
-            return res.status(400).json({
-                message: "Valid email and 6-digit OTP are required",
-            });
-        }
-
-        const normalizedEmail = email.trim().toLowerCase();
-
         const otpRecord = await OTP.findOne({
-            email: normalizedEmail,
+            email
         });
 
+        // Check if OTP exists
         if (!otpRecord) {
             return res.status(404).json({
                 message: "OTP not found or expired",
             });
         }
 
+        // Check OTP expiration
         if (otpRecord.expiresAt <= new Date()) {
             await OTP.deleteOne({
                 _id: otpRecord._id,
@@ -152,17 +182,55 @@ export const verifyRegisterOtp = async (req, res) => {
             });
         }
 
+        // Check maximum attempts
+        if (otpRecord.attempts >= 5) {
+            return res.status(429).json({
+                message: "Maximum OTP attempts reached. Please request a new OTP.",
+            });
+        }
+
+        // Compare submitted OTP with hashed OTP
         const isOtpValid = await bcryptjs.compare(
             otp,
             otpRecord.otp
         );
 
+        // Handle incorrect OTP atomically
         if (!isOtpValid) {
+            const updatedOtp = await OTP.findOneAndUpdate(
+                {
+                    _id: otpRecord._id,
+                    otp: otpRecord.otp,
+                    attempts: { $lt: 5 },
+                    expiresAt: { $gt: new Date() },
+                },
+                {
+                    $inc: { attempts: 1 },
+                },
+                {
+                    new: true,
+                }
+            );
+
+            // OTP changed, expired, or attempts already reached
+            if (!updatedOtp) {
+                return res.status(429).json({
+                    message: "Maximum OTP attempts reached or OTP is no longer valid.",
+                });
+            }
+
+            if (updatedOtp.attempts >= 5) {
+                return res.status(429).json({
+                    message: "Maximum OTP attempts reached. Please request a new OTP.",
+                });
+            }
+
             return res.status(400).json({
                 message: "Invalid OTP",
             });
         }
 
+        // Check registration data
         const userData = otpRecord.userData;
 
         if (
@@ -175,11 +243,11 @@ export const verifyRegisterOtp = async (req, res) => {
             });
         }
 
+        // Check if the email is already registered
         const user = await User.findOne({
-            email: normalizedEmail,
+            email
         });
 
-        // Reject registration if the email already exists
         if (user) {
             await OTP.deleteOne({
                 _id: otpRecord._id,
@@ -191,27 +259,45 @@ export const verifyRegisterOtp = async (req, res) => {
             });
         }
 
-        const newUser = new User({
-            username: userData.username,
-            email: normalizedEmail,
-            password: userData.hashedPassword,
-            isVerified: true,
-        });
+        // Create new user and consume OTP in one transaction
+        const session = await OTP.db.startSession();
 
-        // Tell the User model that the password is already hashed
-        newUser.$locals.passwordAlreadyHashed = true;
+        let newUser;
 
-        // Create the user
-        await newUser.save();
-
-        // Delete OTP in a separate try-catch
         try {
-            await OTP.deleteOne({
-                _id: otpRecord._id,
-                otp: otpRecord.otp,
+            await session.withTransaction(async () => {
+                // Atomically consume OTP
+                const consumedOtp = await OTP.findOneAndDelete(
+                    {
+                        _id: otpRecord._id,
+                        otp: otpRecord.otp,
+                        attempts: { $lt: 5 },
+                        expiresAt: { $gt: new Date() },
+                    },
+                    { session }
+                );
+
+                if (!consumedOtp) {
+                    const error = new Error("OTP is invalid, expired, or already used.");
+                    error.code = "OTP_INVALID";
+                    throw error;
+                }
+
+                // Create new user
+                newUser = new User({
+                    username: userData.username,
+                    email,
+                    password: userData.hashedPassword,
+                    isVerified: true,
+                });
+
+                // Password is already hashed
+                newUser.$locals.passwordAlreadyHashed = true;
+
+                await newUser.save({ session });
             });
-        } catch (deleteError) {
-            console.error("OTP deletion failed:", deleteError);
+        } finally {
+            await session.endSession();
         }
 
         return res.status(201).json({
@@ -227,6 +313,12 @@ export const verifyRegisterOtp = async (req, res) => {
 
     } catch (error) {
         console.error("Verify Register OTP Error:", error);
+
+        if (error.code === "OTP_INVALID") {
+            return res.status(400).json({
+                message: "OTP is invalid, expired, or already used.",
+            });
+        }
 
         if (error.code === 11000) {
             return res.status(409).json({
